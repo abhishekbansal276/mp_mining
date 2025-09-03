@@ -200,7 +200,7 @@ async def create_qr_image_base64(tp_num, url):
 async def pdf_gen(tp_num_list, template_path="mp_format.pdf", log_callback=None, send_pdf_callback=None):
     if not tp_num_list:
         logger.info("ℹ️ No TP numbers provided.")
-        return []
+        return None
 
     os.makedirs("pdf", exist_ok=True)
     all_pdfs = []
@@ -247,12 +247,11 @@ async def pdf_gen(tp_num_list, template_path="mp_format.pdf", log_callback=None,
                     "form_valid_upto": await page.locator("#lbl_formValidUpTo").inner_text()
                 }
 
-
                 data["qr_code_base64"] = await create_qr_image_base64(tp_num, url)
 
                 output_path = f"pdf/{tp_num}.pdf"
                 generate_pdf(data, template_path, output_path)
-                all_pdfs.append((tp_num, output_path))
+                all_pdfs.append(output_path)
 
                 logger.info(f"✅ Successfully processed TP: {tp_num}")
 
@@ -269,9 +268,18 @@ async def pdf_gen(tp_num_list, template_path="mp_format.pdf", log_callback=None,
 
         await browser.close()
 
-    return all_pdfs
+    # 🔗 Merge all PDFs
+    if all_pdfs:
+        merged_path = "pdf/merged_tp.pdf"
+        merger = PdfMerger()
+        for pdf in all_pdfs:
+            merger.append(pdf)
+        merger.write(merged_path)
+        merger.close()
+        logger.info(f"📑 Merged PDF created: {merged_path}")
+        return merged_path
 
-    # ...existing code...
+    return None
 
 if __name__ == "__main__":
     import asyncio
