@@ -281,9 +281,3 @@ async def pdf_gen(tp_num_list, template_path="mp_format.pdf", log_callback=None,
         return merged_path
 
     return None
-
-if __name__ == "__main__":
-    import asyncio
-    # Example TP numbers, replace with your actual list
-    tp_num_list = ["3373202301505900952"]
-    asyncio.run(pdf_gen(tp_num_list))
