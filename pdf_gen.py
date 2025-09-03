@@ -11,6 +11,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from PyPDF2 import PdfReader, PdfWriter
+from PyPDF2 import PdfMerger
 
 # ---------- Logging Setup ----------
 logging.basicConfig(
