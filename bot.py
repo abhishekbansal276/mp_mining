@@ -181,7 +181,7 @@ def button_handler(update: Update, context: CallbackContext):
                                      text="❌ Failed to generate merged PDF.")
 
     elif query.data == "download_merged_pdf":
-        merged_pdf_path = "pdf/All_TP.pdf"
+        merged_pdf_path = "pdf/merged_tp.pdf"
         if os.path.exists(merged_pdf_path):
             with open(merged_pdf_path, "rb") as f:
                 context.bot.send_document(chat_id=query.message.chat.id,
