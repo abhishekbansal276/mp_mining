@@ -30,7 +30,7 @@ async def fetch_single_emm11(playwright, emm11_num, district, log=print):
         istp = (await page.locator("#lbl_istp").inner_text()).strip()
         ostp = (await page.locator("#lbl_Origin_Transit_Pass_No").inner_text()).strip()
 
-        if district_text.upper() == district.upper():
+    if district.upper() in district_text.upper():
             entry = {
                 "eMM11_num": str(emm11_num),        # Added for unique identification
                 "istp": istp,
