@@ -1,27 +1,25 @@
 import os
 import asyncio
 import shutil
+from glob import glob
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.ext import (
     Updater,
     CommandHandler,
     MessageHandler,
     Filters,
-    CallbackQueryHandler,
     CallbackContext,
     ConversationHandler,
 )
-from fetch_emm11_data import fetch_emm11_data
-from login_to_website import login_to_website
-from pdf_gen import pdf_gen  # Generates single merged PDF
 
-BOT_TOKEN = '8244928494:AAFBv7GkQb4TyWmvb2uRmy-mE7YVgF0rxz0'
+from fetch_emm11_data import fetch_emm11_data
+from pdf_gen import pdf_gen  # Generates PDFs and (expected) merged PDF
+
+BOT_TOKEN = '8414234561:AAHkVLYrVcl1q_TBwrwwai4jD6JlQ6w-aDw'
 
 ASK_START, ASK_END, ASK_DISTRICT = range(3)
 user_sessions = {}
-
-# ---------------- Conversation Handlers ----------------
 
 def start(update: Update, context: CallbackContext):
     update.message.reply_text("Welcome! Enter the start number:")
@@ -53,7 +51,7 @@ def ask_district(update: Update, context: CallbackContext):
 
     update.message.reply_text(f"Fetching data for district: {district}...")
 
-    # Store session
+    # store session
     user_sessions[user_id] = {"start": start, "end": end, "district": district, "data": []}
 
     loop = asyncio.new_event_loop()
@@ -77,133 +75,72 @@ def ask_district(update: Update, context: CallbackContext):
 
     loop.run_until_complete(run_fetch())
 
-    if user_sessions[user_id]["data"]:
-        keyboard = [
-            [InlineKeyboardButton("Start Again", callback_data="start_again")],
-            [InlineKeyboardButton("Login & Process", callback_data="login_process")],
-            [InlineKeyboardButton("Exit", callback_data="exit_process")],
-        ]
-        update.message.reply_text("Data fetched. Choose an option:", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
+    entries = user_sessions[user_id]["data"]
+    if not entries:
         update.message.reply_text("No data found.")
+        return ConversationHandler.END
+
+    # build TP list (all ISTP values)
+    tp_num_list = [e.get("istp") for e in entries if e.get("istp")]
+    if not tp_num_list:
+        update.message.reply_text("No TP numbers found in fetched data.")
+        return ConversationHandler.END
+
+    update.message.reply_text(f"Generating PDFs for {len(tp_num_list)} TP(s)... This may take a while.")
+
+    async def run_pdf_gen():
+        # send logs back to user
+        def log_cb(m):
+            context.bot.send_message(chat_id=update.effective_chat.id, text=m)
+        # call pdf_gen (expected to create merged PDF and return its path or similar)
+        return await pdf_gen(tp_num_list, template_path="mp_format.pdf", log_callback=log_cb, send_pdf_callback=None)
+
+    result = loop.run_until_complete(run_pdf_gen())
+
+    # Try to locate merged PDF
+    merged_candidates = []
+    if isinstance(result, str):
+        merged_candidates.append(result)
+    elif isinstance(result, (list, tuple)):
+        # if pdf_gen returned list of generated files, look for a merged file in pdf dir
+        merged_candidates.extend(result)
+    # common fallback names
+    merged_candidates.extend([
+        "pdf/merged_tp.pdf",
+        "pdf/All_TP.pdf",
+        "pdf/merged.pdf",
+        "pdf/AllTP.pdf"
+    ])
+    # also search for any file in pdf dir with "merged" or "All"
+    merged_candidates.extend(glob("pdf/*merged*.pdf"))
+    merged_candidates.extend(glob("pdf/*All*.pdf"))
+
+    merged_path = None
+    for p in merged_candidates:
+        if p and os.path.exists(p):
+            merged_path = p
+            break
+
+    if merged_path:
+        with open(merged_path, "rb") as f:
+            context.bot.send_document(chat_id=update.effective_chat.id,
+                                      document=f,
+                                      filename=os.path.basename(merged_path),
+                                      caption="Merged PDF with all generated TP PDFs")
+        update.message.reply_text("✅ Merged PDF sent.")
+    else:
+        update.message.reply_text("❌ Merged PDF not found on server. Check pdf_gen output or merged filename.")
 
     return ConversationHandler.END
-
-# ---------------- Callback Button Handler ----------------
-
-def button_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
-    user_id = query.from_user.id
-
-    if user_id not in user_sessions:
-        query.edit_message_text("⚠️ Session expired. Please type /start.")
-        return
-
-    session = user_sessions[user_id]
-
-    if query.data == "start_again":
-        query.edit_message_text("🔁 Restarting...")
-        context.bot.send_message(chat_id=query.message.chat.id, text="/start")
-        user_sessions.pop(user_id, None)
-        return
-
-    elif query.data == "exit_process":
-        query.edit_message_text("❌ Exiting process.")
-        user_sessions.pop(user_id, None)
-        return
-
-    elif query.data == "login_process":
-        query.edit_message_text("Processing entries...")
-
-        async def process_and_prompt():
-            def log_callback(msg):
-                context.bot.send_message(chat_id=query.message.chat.id, text=msg)
-
-            # Run login and mark unused TP pairs
-            processed_entries = await login_to_website(session["data"], log_callback=log_callback)
-
-            if not processed_entries:
-                context.bot.send_message(chat_id=query.message.chat.id,
-                                         text="❌ Failed to process entries.")
-                return
-
-            session["data"] = processed_entries
-
-            # Extract TP numbers that are unused
-            tp_num_list = [entry['istp'] for entry in processed_entries if entry.get("unused")]
-
-            if not tp_num_list:
-                context.bot.send_message(chat_id=query.message.chat.id,
-                                         text="⚠️ No unused TP pairs found. PDF cannot be generated.")
-                return
-
-            context.user_data["tp_num_list"] = tp_num_list
-
-            keyboard = [
-                [InlineKeyboardButton("📄 Generate PDF", callback_data="generate_pdf")],
-                [InlineKeyboardButton("❌ Exit", callback_data="exit_process")]
-            ]
-            context.bot.send_message(chat_id=query.message.chat.id,
-                                     text="✅ Generate PDF for unused TP pairs:",
-                                     reply_markup=InlineKeyboardMarkup(keyboard))
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(process_and_prompt())
-
-    elif query.data == "generate_pdf":
-        tp_num_list = context.user_data.get("tp_num_list", [])
-        if not tp_num_list:
-            query.edit_message_text("⚠️ No TP numbers. Process again.")
-            return
-
-        async def generate_and_store():
-            merged_pdf_path = await pdf_gen(
-                tp_num_list,
-                log_callback=lambda msg: context.bot.send_message(chat_id=query.message.chat.id, text=msg),
-                send_pdf_callback=None
-            )
-            return merged_pdf_path
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        merged_pdf_path = loop.run_until_complete(generate_and_store())
-
-        if merged_pdf_path and os.path.exists(merged_pdf_path):
-            keyboard = [[InlineKeyboardButton("📄 Download All TP PDF", callback_data="download_merged_pdf")]]
-            keyboard.append([InlineKeyboardButton("❌ Exit", callback_data="exit_process")])
-            context.bot.send_message(chat_id=query.message.chat.id,
-                                     text="✅ Click below to download the merged PDF for all unused TP pairs:",
-                                     reply_markup=InlineKeyboardMarkup(keyboard))
-        else:
-            context.bot.send_message(chat_id=query.message.chat.id,
-                                     text="❌ Failed to generate merged PDF.")
-
-    elif query.data == "download_merged_pdf":
-        merged_pdf_path = "pdf/merged_tp.pdf"
-        if os.path.exists(merged_pdf_path):
-            with open(merged_pdf_path, "rb") as f:
-                context.bot.send_document(chat_id=query.message.chat.id,
-                                          document=f,
-                                          filename="All_TP.pdf",
-                                          caption="PDF containing all unused TP pairs")
-        else:
-            context.bot.send_message(chat_id=query.message.chat.id,
-                                     text="❌ Merged PDF not found. Please generate again.")
-
-# ---------------- Cancel Handler ----------------
 
 def cancel(update: Update, context: CallbackContext):
     update.message.reply_text("🚫 Operation cancelled.")
     return ConversationHandler.END
 
-# ---------------- Main ----------------
-
 def main():
     try:
         shutil.rmtree("pdf")
-    except:
+    except Exception:
         pass
 
     updater = Updater(BOT_TOKEN, use_context=True)
@@ -220,7 +157,6 @@ def main():
     )
 
     dp.add_handler(conv_handler)
-    dp.add_handler(CallbackQueryHandler(button_handler))
 
     print("🤖 Bot running...")
     updater.start_polling()
