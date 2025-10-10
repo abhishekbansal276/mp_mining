@@ -16,7 +16,7 @@ from telegram.ext import (
 from fetch_emm11_data import fetch_emm11_data
 from pdf_gen import pdf_gen  # Generates PDFs and (expected) merged PDF
 
-BOT_TOKEN = '8414234561:AAHkVLYrVcl1q_TBwrwwai4jD6JlQ6w-aDw'
+BOT_TOKEN = '8244928494:AAFBv7GkQb4TyWmvb2uRmy-mE7YVgF0rxz0'
 
 ASK_START, ASK_END, ASK_DISTRICT = range(3)
 user_sessions = {}
